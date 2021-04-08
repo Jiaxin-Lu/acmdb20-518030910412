@@ -2,6 +2,9 @@ package simpledb;
 
 import java.io.*;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -26,13 +29,19 @@ public class BufferPool {
     constructor instead. */
     public static final int DEFAULT_PAGES = 50;
 
+    private int maxNumPages;
+    private Page[] pageBuffer;
+    private HashMap<PageId, Integer> pageIdHashMap;
+
     /**
      * Creates a BufferPool that caches up to numPages pages.
      *
      * @param numPages maximum number of pages in this buffer pool.
      */
     public BufferPool(int numPages) {
-        // some code goes here
+        this.maxNumPages = numPages;
+        this.pageBuffer = new Page[numPages];
+        this.pageIdHashMap = new HashMap<>();
     }
     
     public static int getPageSize() {
@@ -64,10 +73,23 @@ public class BufferPool {
      * @param pid the ID of the requested page
      * @param perm the requested permissions on the page
      */
-    public  Page getPage(TransactionId tid, PageId pid, Permissions perm)
+    public Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
-        // some code goes here
-        return null;
+        if (pageIdHashMap.containsKey(pid))
+        {
+            return pageBuffer[pageIdHashMap.get(pid)];
+        } else {
+            Page page = Database.getCatalog().getDatabaseFile(pid.getTableId()).readPage(pid);
+            for (int i = 0; i < pageBuffer.length; i++)
+            {
+                if (pageBuffer[i] == null)
+                {
+                    pageBuffer[i] = page;
+                    return page;
+                }
+            }
+            throw new DbException("getPage exceed maxNumPage");
+        }
     }
 
     /**
