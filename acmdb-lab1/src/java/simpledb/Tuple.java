@@ -104,7 +104,7 @@ public class Tuple implements Serializable {
      * */
     public Iterator<Field> fields()
     {
-        return fields.listIterator();
+        return fields.iterator();
     }
 
     /**
