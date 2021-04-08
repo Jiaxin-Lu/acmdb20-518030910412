@@ -31,6 +31,7 @@ public class BufferPool {
 
     private int maxNumPages;
     private Page[] pageBuffer;
+    private boolean[] pageBufferUsed;
     private HashMap<PageId, Integer> pageIdHashMap;
 
     /**
@@ -41,7 +42,12 @@ public class BufferPool {
     public BufferPool(int numPages) {
         this.maxNumPages = numPages;
         this.pageBuffer = new Page[numPages];
+        this.pageBufferUsed = new boolean[numPages];
         this.pageIdHashMap = new HashMap<>();
+        for (int i = 0; i < this.pageBufferUsed.length; i++)
+        {
+            pageBufferUsed[i] = false;
+        }
     }
     
     public static int getPageSize() {
@@ -82,9 +88,11 @@ public class BufferPool {
             Page page = Database.getCatalog().getDatabaseFile(pid.getTableId()).readPage(pid);
             for (int i = 0; i < pageBuffer.length; i++)
             {
-                if (pageBuffer[i] == null)
+                if (!pageBufferUsed[i])
                 {
                     pageBuffer[i] = page;
+                    pageBufferUsed[i] = true;
+                    pageIdHashMap.put(pid, i);
                     return page;
                 }
             }
