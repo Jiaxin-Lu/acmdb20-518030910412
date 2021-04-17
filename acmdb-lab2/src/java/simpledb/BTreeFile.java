@@ -195,8 +195,37 @@ public class BTreeFile implements DbFile {
 	private BTreeLeafPage findLeafPage(TransactionId tid, HashMap<PageId, Page> dirtypages, BTreePageId pid, Permissions perm,
 			Field f) 
 					throws DbException, TransactionAbortedException {
-		// some code goes here
-        return null;
+		BTreePage tmpPage = null;
+		if (pid.pgcateg() == BTreePageId.LEAF)
+		{
+			return (BTreeLeafPage) getPage(tid, dirtypages, pid, perm);
+		} else if (pid.pgcateg() == BTreePageId.INTERNAL)
+		{
+			tmpPage = (BTreePage) getPage(tid, dirtypages, pid, Permissions.READ_ONLY);
+		}
+		else
+			throw new DbException("wrong pid in findLeafPage");
+
+		Iterator<BTreeEntry> entryIterator = ((BTreeInternalPage) tmpPage).iterator();
+		BTreeEntry tmpEntry = null;
+		if (f == null)
+		{
+			tmpEntry = entryIterator.next();
+			return findLeafPage(tid, dirtypages, tmpEntry.getLeftChild(), perm, f);
+		}
+		IndexPredicate target = new IndexPredicate(Op.LESS_THAN_OR_EQ, f);
+		while (entryIterator.hasNext())
+		{
+			tmpEntry = entryIterator.next();
+			IndexPredicate tmp = new IndexPredicate(Op.LESS_THAN_OR_EQ, tmpEntry.getKey());
+			if (target.equals(tmp))
+			{
+				return findLeafPage(tid, dirtypages, tmpEntry.getLeftChild(), perm, f);
+			}
+		}
+		if (tmpEntry == null)
+			throw new DbException("no match entry in findLeafPage");
+		return findLeafPage(tid, dirtypages, tmpEntry.getRightChild(), perm, f);
 	}
 	
 	/**
