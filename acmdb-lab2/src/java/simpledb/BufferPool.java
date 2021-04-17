@@ -1,10 +1,14 @@
 package simpledb;
 
+import sun.awt.image.ImageWatched;
+
+import javax.xml.crypto.Data;
 import java.io.*;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedList;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -33,6 +37,7 @@ public class BufferPool {
     private Page[] pageBuffer;
     private boolean[] pageBufferUsed;
     private HashMap<PageId, Integer> pageIdHashMap;
+    private LinkedList<PageId> LRUList;
 
     /**
      * Creates a BufferPool that caches up to numPages pages.
@@ -48,6 +53,7 @@ public class BufferPool {
         {
             pageBufferUsed[i] = false;
         }
+        this.LRUList = new LinkedList<>();
     }
     
     public static int getPageSize() {
@@ -83,20 +89,37 @@ public class BufferPool {
         throws TransactionAbortedException, DbException {
         if (pageIdHashMap.containsKey(pid))
         {
+            LRUList.remove(pid);
+            LRUList.addLast(pid);
             return pageBuffer[pageIdHashMap.get(pid)];
         } else {
             Page page = Database.getCatalog().getDatabaseFile(pid.getTableId()).readPage(pid);
+            int index = pageBuffer.length;
             for (int i = 0; i < pageBuffer.length; i++)
             {
                 if (!pageBufferUsed[i])
                 {
-                    pageBuffer[i] = page;
-                    pageBufferUsed[i] = true;
-                    pageIdHashMap.put(pid, i);
-                    return page;
+                    index = i;
+                    break;
                 }
             }
-            throw new DbException("getPage exceed maxNumPage");
+            if (index >= pageBuffer.length)
+            {
+                this.evictPage();
+                for (int i = 0; i < pageBuffer.length; i++)
+                {
+                    if (!pageBufferUsed[i])
+                    {
+                        index = i;
+                        break;
+                    }
+                }
+            }
+            pageBuffer[index] = page;
+            pageBufferUsed[index] = true;
+            pageIdHashMap.put(pid, index);
+            LRUList.addLast(pid);
+            return page;
         }
     }
 
@@ -163,6 +186,7 @@ public class BufferPool {
         throws DbException, IOException, TransactionAbortedException {
         // some code goes here
         // not necessary for lab1
+        // TODO
     }
 
     /**
@@ -182,6 +206,7 @@ public class BufferPool {
         throws DbException, IOException, TransactionAbortedException {
         // some code goes here
         // not necessary for lab1
+        // TODO
     }
 
     /**
@@ -190,9 +215,10 @@ public class BufferPool {
      *     break simpledb if running in NO STEAL mode.
      */
     public synchronized void flushAllPages() throws IOException {
-        // some code goes here
-        // not necessary for lab1
-
+        for (PageId pageId : pageIdHashMap.keySet())
+        {
+            this.flushPage(pageId);
+        }
     }
 
     /** Remove the specific page id from the buffer pool.
@@ -204,8 +230,13 @@ public class BufferPool {
         are removed from the cache so they can be reused safely
     */
     public synchronized void discardPage(PageId pid) {
-        // some code goes here
-        // not necessary for lab1
+        if (pageIdHashMap.containsKey(pid))
+        {
+            int arrayIndex = pageIdHashMap.get(pid);
+            pageBufferUsed[arrayIndex] = true;
+            pageIdHashMap.remove(pid);
+            LRUList.remove(pid);
+        }
     }
 
     /**
@@ -213,8 +244,12 @@ public class BufferPool {
      * @param pid an ID indicating the page to flush
      */
     private synchronized  void flushPage(PageId pid) throws IOException {
-        // some code goes here
-        // not necessary for lab1
+        if (pageIdHashMap.containsKey(pid))
+        {
+            int arrayIndex = pageIdHashMap.get(pid);
+            Database.getCatalog().getDatabaseFile(pid.getTableId()).writePage(pageBuffer[arrayIndex]);
+            pageBufferUsed[arrayIndex] = true;
+        }
     }
 
     /** Write all pages of the specified transaction to disk.
@@ -229,8 +264,17 @@ public class BufferPool {
      * Flushes the page to disk to ensure dirty pages are updated on disk.
      */
     private synchronized  void evictPage() throws DbException {
-        // some code goes here
-        // not necessary for lab1
+        PageId pid = LRUList.pollFirst();
+        int arrayIndex = pageIdHashMap.get(pid);
+        try{
+            this.flushPage(pid);
+        }catch (IOException e)
+        {
+            e.printStackTrace();
+            System.err.println("IOException in evictPage");
+        }
+        pageBufferUsed[arrayIndex] = false;
+        pageIdHashMap.remove(pid);
     }
 
 }
