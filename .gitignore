@@ -4,6 +4,9 @@
 /acmdb-lab2/.idea/
 /acmdb-lab2/bin/
 /acmdb-lab2/dist/
+/acmdb-lab3/.idea/
+/acmdb-lab3/bin/
+/acmdb-lab3/dist/
 
 *.iml
 *.dat
