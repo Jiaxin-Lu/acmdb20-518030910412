@@ -188,6 +188,39 @@ public class BufferPool {
         ArrayList<Page> dirtyPages = dbFile.insertTuple(tid, t);
         for (Page dirtyPage : dirtyPages)
         {
+            PageId pid = dirtyPage.getId();
+            if (this.pageIdHashMap.containsKey(pid))
+            {
+                LRUList.remove(pid);
+                LRUList.addLast(pid);
+                pageBuffer[pageIdHashMap.get(pid)] = dirtyPage;
+            } else {
+                int index = pageBuffer.length;
+                for (int i = 0; i < pageBuffer.length; i++)
+                {
+                    if (!pageBufferUsed[i])
+                    {
+                        index = i;
+                        break;
+                    }
+                }
+                while (index >= pageBuffer.length)
+                {
+                    this.evictPage();
+                    for (int i = 0; i < pageBuffer.length; i++)
+                    {
+                        if (!pageBufferUsed[i])
+                        {
+                            index = i;
+                            break;
+                        }
+                    }
+                }
+                pageBuffer[index] = dirtyPage;
+                pageBufferUsed[index] = true;
+                pageIdHashMap.put(pid, index);
+                LRUList.addLast(pid);
+            }
             dirtyPage.markDirty(true, tid);
         }
     }
@@ -211,6 +244,39 @@ public class BufferPool {
         ArrayList<Page> dirtyPages = dbFile.deleteTuple(tid, t);
         for (Page dirtyPage : dirtyPages)
         {
+            PageId pid = dirtyPage.getId();
+            if (this.pageIdHashMap.containsKey(pid))
+            {
+                LRUList.remove(pid);
+                LRUList.addLast(pid);
+                pageBuffer[pageIdHashMap.get(pid)] = dirtyPage;
+            } else {
+                int index = pageBuffer.length;
+                for (int i = 0; i < pageBuffer.length; i++)
+                {
+                    if (!pageBufferUsed[i])
+                    {
+                        index = i;
+                        break;
+                    }
+                }
+                while (index >= pageBuffer.length)
+                {
+                    this.evictPage();
+                    for (int i = 0; i < pageBuffer.length; i++)
+                    {
+                        if (!pageBufferUsed[i])
+                        {
+                            index = i;
+                            break;
+                        }
+                    }
+                }
+                pageBuffer[index] = dirtyPage;
+                pageBufferUsed[index] = true;
+                pageIdHashMap.put(pid, index);
+                LRUList.addLast(pid);
+            }
             dirtyPage.markDirty(true, tid);
         }
     }

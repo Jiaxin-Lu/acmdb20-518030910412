@@ -7,6 +7,7 @@
 /acmdb-lab3/.idea/
 /acmdb-lab3/bin/
 /acmdb-lab3/dist/
+/acmdb-lab3/dataset/
 
 *.iml
 *.dat

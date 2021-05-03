@@ -1,11 +1,24 @@
 package simpledb;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
+
 /**
  * Knows how to compute some aggregate over a set of StringFields.
  */
 public class StringAggregator implements Aggregator {
 
     private static final long serialVersionUID = 1L;
+
+    private int gbField;
+    private Type gbFieldType;
+    private int aField;
+    private Op op;
+
+    private HashMap<Field, Integer> countMap;
+
+    private TupleDesc resultTD = null;
 
     /**
      * Aggregate constructor
@@ -17,7 +30,18 @@ public class StringAggregator implements Aggregator {
      */
 
     public StringAggregator(int gbfield, Type gbfieldtype, int afield, Op what) {
-        // some code goes here
+        if (what != Op.COUNT) throw new UnsupportedOperationException("string only support count in aggregator");
+        this.gbField = gbfield;
+        this.gbFieldType = gbfieldtype;
+        this.aField = afield;
+        this.op = what;
+        this.countMap = new HashMap<>();
+        if (gbfield == NO_GROUPING)
+        {
+            this.resultTD = new TupleDesc(new Type[]{Type.INT_TYPE}, new String[]{"aggregateVal"});
+        } else {
+            this.resultTD = new TupleDesc(new Type[]{gbfieldtype, Type.INT_TYPE}, new String[]{"groupVal", "aggregateVal"});
+        }
     }
 
     /**
@@ -25,7 +49,13 @@ public class StringAggregator implements Aggregator {
      * @param tup the Tuple containing an aggregate field and a group-by field
      */
     public void mergeTupleIntoGroup(Tuple tup) {
-        // some code goes here
+        Field groupField = null;
+        if (this.gbField != NO_GROUPING)
+        {
+            groupField = tup.getField(this.gbField);
+        }
+        Integer cnt = countMap.getOrDefault(groupField, 0);
+        countMap.put(groupField, cnt + 1);
     }
 
     /**
@@ -37,8 +67,22 @@ public class StringAggregator implements Aggregator {
      *   aggregate specified in the constructor.
      */
     public DbIterator iterator() {
-        // some code goes here
-        throw new UnsupportedOperationException("please implement me for lab3");
+        ArrayList<Tuple> resultTuple = new ArrayList<>();
+        for (Map.Entry<Field, Integer> entry : countMap.entrySet())
+        {
+            Tuple tmpTuple = new Tuple(this.resultTD);
+            Integer tmpVal = entry.getValue();
+
+            if (gbField == NO_GROUPING)
+            {
+                tmpTuple.setField(0, new IntField(tmpVal));
+            } else {
+                tmpTuple.setField(0, entry.getKey());
+                tmpTuple.setField(1, new IntField(tmpVal));
+            }
+            resultTuple.add(tmpTuple);
+        }
+        return new TupleIterator(resultTD, resultTuple);
     }
 
 }
