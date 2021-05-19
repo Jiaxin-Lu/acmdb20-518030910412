@@ -4,6 +4,12 @@ package simpledb;
  */
 public class IntHistogram {
 
+    private int numBuckets;
+    private int min;
+    private int max;
+    private int width;
+    private int[] buckets;
+    private int numTableTuple;
     /**
      * Create a new IntHistogram.
      * 
@@ -21,7 +27,24 @@ public class IntHistogram {
      * @param max The maximum integer value that will ever be passed to this class for histogramming
      */
     public IntHistogram(int buckets, int min, int max) {
-    	// some code goes here
+        if (max - min + 1 < buckets) buckets = max - min + 1;
+        this.numBuckets = buckets;
+        this.min = min;
+        this.max = max;
+        this.buckets = new int[numBuckets];
+        this.width = (max - min + 1) / this.numBuckets;
+        this.numTableTuple = 0;
+    }
+
+    private int getIndex(int v)
+    {
+        return Math.min((v - this.min) / this.width, this.numBuckets - 1);
+    }
+
+    private int getBucketWidth(int index)
+    {
+        if (index < this.numBuckets - 1) return this.width;
+        else return (this.max - this.min + 1) - this.width * (this.numBuckets - 1);
     }
 
     /**
@@ -29,7 +52,9 @@ public class IntHistogram {
      * @param v Value to add to the histogram
      */
     public void addValue(int v) {
-    	// some code goes here
+        int index = getIndex(v);
+        this.buckets[index] ++;
+        this.numTableTuple ++;
     }
 
     /**
@@ -43,9 +68,42 @@ public class IntHistogram {
      * @return Predicted selectivity of this particular operator and value
      */
     public double estimateSelectivity(Predicate.Op op, int v) {
-
-    	// some code goes here
-        return -1.0;
+        int index = getIndex(v);
+        double numSatisfyTuples = 0.0;
+        switch (op)
+        {
+            case EQUALS:
+                if (v < min || v > max) return 0.0;
+                numSatisfyTuples = 1.0 * buckets[index] / getBucketWidth(index);
+                break;
+            case GREATER_THAN:
+                if (v < min) return 1.0;
+                if (v >= max) return 0.0;
+                for (int i = index+1; i < this.numBuckets; ++i)
+                {
+                    numSatisfyTuples += buckets[i];
+                }
+                int right = index * this.width + getBucketWidth(index);
+                numSatisfyTuples += 1.0 * buckets[index] * (right - v) / getBucketWidth(index);
+                break;
+            case LESS_THAN:
+                if (v <= min) return 0.0;
+                if (v > max) return 1.0;
+                for (int i = 0; i < index; ++i)
+                {
+                    numSatisfyTuples += buckets[i];
+                }
+                int left = index * this.width + 1;
+                numSatisfyTuples += 1.0 * buckets[index] * (v-left) / getBucketWidth(index);
+                break;
+            case LESS_THAN_OR_EQ:
+                return estimateSelectivity(Predicate.Op.LESS_THAN, v+1);
+            case GREATER_THAN_OR_EQ:
+                return estimateSelectivity(Predicate.Op.GREATER_THAN, v-1);
+            case NOT_EQUALS:
+                return 1.0 - estimateSelectivity(Predicate.Op.EQUALS, v);
+        }
+        return numSatisfyTuples / (double) this.numTableTuple;
     }
     
     /**

@@ -111,7 +111,7 @@ public class JoinOptimizer {
             // HINT: You may need to use the variable "j" if you implemented
             // a join algorithm that's more complicated than a basic
             // nested-loops join.
-            return -1.0;
+            return cost1 + card1 * cost2 + card1 * card2;
         }
     }
 
@@ -156,7 +156,29 @@ public class JoinOptimizer {
             boolean t2pkey, Map<String, TableStats> stats,
             Map<String, Integer> tableAliasToId) {
         int card = 1;
-        // some code goes here
+        switch (joinOp)
+        {
+            case EQUALS:
+                if (t1pkey && t2pkey) card = Integer.min(card1, card2);
+                else if (t1pkey) card = card2;
+                else if (t2pkey) card = card1;
+                else card = Integer.max(card1, card2);
+                break;
+            case GREATER_THAN:
+            case LESS_THAN:
+            case LESS_THAN_OR_EQ:
+            case GREATER_THAN_OR_EQ:
+                card = (int) (card1 * card2 * 0.3);
+                break;
+            case LIKE:
+                break;
+            case NOT_EQUALS:
+                if (t1pkey && t2pkey) card = card1 * card2 - Integer.min(card1, card2);
+                else if (t1pkey) card = card1 * card2 - card2;
+                else if (t2pkey) card = card1 * card2 - card1;
+                else card = card1 * card2 - Integer.max(card1, card2);
+                break;
+        }
         return card <= 0 ? 1 : card;
     }
 
@@ -217,11 +239,31 @@ public class JoinOptimizer {
             HashMap<String, TableStats> stats,
             HashMap<String, Double> filterSelectivities, boolean explain)
             throws ParsingException {
-        //Not necessary for labs 1--3
-
-        // some code goes here
-        //Replace the following
-        return joins;
+        PlanCache planCache = new PlanCache();
+        int numNodes = joins.size();
+        for (int i = 1; i <= numNodes; i++)
+        {
+            Set<Set<LogicalJoinNode>> setOfSubset = enumerateSubsets(joins, i);
+            for (Set<LogicalJoinNode> subset : setOfSubset)
+            {
+                double minCost = Double.MAX_VALUE;
+                CostCard minPlan = null;
+                for (LogicalJoinNode joinNode : subset)
+                {
+                    CostCard plan = computeCostAndCardOfSubplan(stats, filterSelectivities, joinNode, subset, minCost, planCache);
+                    if (plan != null)
+                    {
+                        minCost = plan.cost;
+                        minPlan = plan;
+                    }
+                }
+                if (minPlan != null)
+                {
+                    planCache.addPlan(subset, minPlan.cost, minPlan.card, minPlan.plan);
+                }
+            }
+        }
+        return planCache.getOrder(new HashSet<>(joins));
     }
 
     // ===================== Private Methods =================================
