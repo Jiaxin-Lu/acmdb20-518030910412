@@ -12,6 +12,10 @@
 /acmdb-lab4/bin/
 /acmdb-lab4/dist/
 /acmdb-lab4/dataset/
+/acmdb-lab5/.idea/
+/acmdb-lab5/bin/
+/acmdb-lab5/dist/
+/acmdb-lab5/dataset/
 
 *.iml
 *.dat
