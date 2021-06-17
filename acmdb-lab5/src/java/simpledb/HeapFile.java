@@ -84,11 +84,16 @@ public class HeapFile implements DbFile {
     // see DbFile.java for javadocs
     public void writePage(Page page) throws IOException {
         int pageNumber = page.getId().pageNumber();
-        byte[] data = page.getPageData();
-        RandomAccessFile randomAccessFile = new RandomAccessFile(this.f, "rw");
-        randomAccessFile.seek(pageNumber*BufferPool.getPageSize());
-        randomAccessFile.write(data, 0, BufferPool.getPageSize());
-        randomAccessFile.close();
+        try{
+            byte[] data = page.getPageData();
+            RandomAccessFile randomAccessFile = new RandomAccessFile(this.f, "rw");
+            randomAccessFile.seek(pageNumber*BufferPool.getPageSize());
+            randomAccessFile.write(data, 0, BufferPool.getPageSize());
+            randomAccessFile.close();
+        } catch (Exception e)
+        {
+            e.printStackTrace();
+        }
     }
 
     /**

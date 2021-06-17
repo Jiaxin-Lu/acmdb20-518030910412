@@ -1,14 +1,9 @@
 package simpledb;
 
-import sun.awt.image.ImageWatched;
 
-import javax.xml.crypto.Data;
 import java.io.*;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
-import java.util.LinkedList;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -39,6 +34,54 @@ public class BufferPool {
     private HashMap<PageId, Integer> pageIdHashMap;
     private LinkedList<PageId> LRUList;
 
+    private class Dependency
+    {
+        public ConcurrentHashMap<TransactionId, Set<TransactionId>> tidToEdge = new ConcurrentHashMap<>();
+        public Set<TransactionId> vis = Collections.synchronizedSet(new HashSet<>());
+
+        synchronized void modifyEdges(TransactionId tid, PageId pid)
+        {
+            tidToEdge.putIfAbsent(tid, new HashSet<>());
+            Set<TransactionId> edges = tidToEdge.get(tid);
+            edges.clear();
+            if (pid == null) return;
+
+            Set <TransactionId> pidToTid;
+            synchronized (pidToLock.get(pid))
+            {
+                pidToTid = pidToLock.get(pid).relatedTid();
+            }
+            edges.addAll(pidToTid);
+        }
+
+        boolean DFS(TransactionId tid, TransactionId fa)
+        {
+            vis.add(tid);
+            Set<TransactionId> edges = tidToEdge.get(tid);
+            if (edges == null) return false;
+            boolean flag = false;
+            for (TransactionId ne : edges)
+            {
+                if (ne.equals(fa)) return true;
+                if (!vis.contains(ne))
+                {
+                    flag = flag || DFS(ne, fa);
+                }
+            }
+            return flag;
+        }
+
+        synchronized boolean isDeadLocked(TransactionId tid)
+        {
+            vis.clear();
+            return DFS(tid, tid);
+        }
+    }
+
+    private ConcurrentHashMap<PageId, PageLock> pidToLock;
+    private ConcurrentHashMap<TransactionId, Set<PageId>> tidToPid;
+    private Dependency dependency;
+
     /**
      * Creates a BufferPool that caches up to numPages pages.
      *
@@ -54,6 +97,9 @@ public class BufferPool {
             pageBufferUsed[i] = false;
         }
         this.LRUList = new LinkedList<>();
+        pidToLock = new ConcurrentHashMap<>();
+        tidToPid = new ConcurrentHashMap<>();
+        dependency = new Dependency();
     }
     
     public static int getPageSize() {
@@ -87,25 +133,39 @@ public class BufferPool {
      */
     public Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
-        if (pageIdHashMap.containsKey(pid))
+        pidToLock.putIfAbsent(pid, new PageLock(pid));
+        boolean success;
+        synchronized (pidToLock.get(pid))
         {
-            LRUList.remove(pid);
-            LRUList.addLast(pid);
-            return pageBuffer[pageIdHashMap.get(pid)];
-        } else {
-            Page page = Database.getCatalog().getDatabaseFile(pid.getTableId()).readPage(pid);
-            int index = pageBuffer.length;
-            for (int i = 0; i < pageBuffer.length; i++)
+            success = pidToLock.get(pid).addLock(perm, tid);
+        }
+        while (!success)
+        {
+            dependency.modifyEdges(tid, pid);
+            if (dependency.isDeadLocked(tid))
             {
-                if (!pageBufferUsed[i])
-                {
-                    index = i;
-                    break;
-                }
+                throw new TransactionAbortedException();
             }
-            if (index >= pageBuffer.length)
+            synchronized (pidToLock.get(pid))
             {
-                this.evictPage();
+                success = pidToLock.get(pid).addLock(perm, tid);
+            }
+        }
+        dependency.modifyEdges(tid, null);
+        tidToPid.putIfAbsent(tid, new HashSet<>());
+        tidToPid.get(tid).add(pid);
+
+        synchronized (this)
+        {
+            if (pageIdHashMap.containsKey(pid))
+            {
+                LRUList.remove(pid);
+                LRUList.addLast(pid);
+                return pageBuffer[pageIdHashMap.get(pid)];
+            } else
+            {
+                Page page = Database.getCatalog().getDatabaseFile(pid.getTableId()).readPage(pid);
+                int index = pageBuffer.length;
                 for (int i = 0; i < pageBuffer.length; i++)
                 {
                     if (!pageBufferUsed[i])
@@ -114,12 +174,25 @@ public class BufferPool {
                         break;
                     }
                 }
+                if (index >= pageBuffer.length)
+                {
+                    this.evictPage();
+                    for (int i = 0; i < pageBuffer.length; i++)
+                    {
+                        if (!pageBufferUsed[i])
+                        {
+                            index = i;
+                            break;
+                        }
+                    }
+                }
+                page.setBeforeImage();
+                pageBuffer[index] = page;
+                pageBufferUsed[index] = true;
+                pageIdHashMap.put(pid, index);
+                LRUList.addLast(pid);
+                return page;
             }
-            pageBuffer[index] = page;
-            pageBufferUsed[index] = true;
-            pageIdHashMap.put(pid, index);
-            LRUList.addLast(pid);
-            return page;
         }
     }
 
@@ -133,8 +206,11 @@ public class BufferPool {
      * @param pid the ID of the page to unlock
      */
     public  void releasePage(TransactionId tid, PageId pid) {
-        // some code goes here
-        // not necessary for lab1|lab2
+        synchronized (pidToLock.get(pid))
+        {
+            pidToLock.get(pid).releaseLock(tid);
+        }
+        tidToPid.get(tid).remove(pid);
     }
 
     /**
@@ -143,15 +219,15 @@ public class BufferPool {
      * @param tid the ID of the transaction requesting the unlock
      */
     public void transactionComplete(TransactionId tid) throws IOException {
-        // some code goes here
-        // not necessary for lab1|lab2
+        transactionComplete(tid, true);
     }
 
     /** Return true if the specified transaction has a lock on the specified page */
     public boolean holdsLock(TransactionId tid, PageId p) {
-        // some code goes here
-        // not necessary for lab1|lab2
-        return false;
+        synchronized (pidToLock.get(p))
+        {
+            return pidToLock.get(p).isHolding(tid);
+        }
     }
 
     /**
@@ -163,8 +239,38 @@ public class BufferPool {
      */
     public void transactionComplete(TransactionId tid, boolean commit)
         throws IOException {
-        // some code goes here
-        // not necessary for lab1|lab2
+        Set<PageId> lockPages = tidToPid.get(tid);
+        tidToPid.remove(tid);
+        if (lockPages == null)
+        {
+            return;
+        }
+        for (PageId pid : lockPages)
+        {
+            if (pageIdHashMap.containsKey(pid))
+            {
+                Page page = pageBuffer[pageIdHashMap.get(pid)];
+                if (pidToLock.get(pid).isExclusive())
+                {
+                    if (commit)
+                    {
+                        if (page.isDirty() != null)
+                        {
+                            this.flushPage(pid);
+                            page.markDirty(false, null);
+                            page.setBeforeImage();
+                        }
+                    } else {
+                        assert page.getBeforeImage() != null;
+                        pageBuffer[pageIdHashMap.get(pid)] = page.getBeforeImage();
+                    }
+                }
+            }
+            synchronized (pidToLock.get(pid))
+            {
+                pidToLock.get(pid).releaseLock(tid);
+            }
+        }
     }
 
     /**
@@ -186,27 +292,18 @@ public class BufferPool {
         throws DbException, IOException, TransactionAbortedException {
         DbFile dbFile = Database.getCatalog().getDatabaseFile(tableId);
         ArrayList<Page> dirtyPages = dbFile.insertTuple(tid, t);
-        for (Page dirtyPage : dirtyPages)
+        synchronized (this)
         {
-            PageId pid = dirtyPage.getId();
-            if (this.pageIdHashMap.containsKey(pid))
+            for (Page dirtyPage : dirtyPages)
             {
-                LRUList.remove(pid);
-                LRUList.addLast(pid);
-                pageBuffer[pageIdHashMap.get(pid)] = dirtyPage;
-            } else {
-                int index = pageBuffer.length;
-                for (int i = 0; i < pageBuffer.length; i++)
+                PageId pid = dirtyPage.getId();
+                if (this.pageIdHashMap.containsKey(pid))
                 {
-                    if (!pageBufferUsed[i])
-                    {
-                        index = i;
-                        break;
-                    }
-                }
-                while (index >= pageBuffer.length)
-                {
-                    this.evictPage();
+                    LRUList.remove(pid);
+                    LRUList.addLast(pid);
+                    pageBuffer[pageIdHashMap.get(pid)] = dirtyPage;
+                } else {
+                    int index = pageBuffer.length;
                     for (int i = 0; i < pageBuffer.length; i++)
                     {
                         if (!pageBufferUsed[i])
@@ -215,13 +312,26 @@ public class BufferPool {
                             break;
                         }
                     }
+                    while (index >= pageBuffer.length)
+                    {
+                        this.evictPage();
+                        for (int i = 0; i < pageBuffer.length; i++)
+                        {
+                            if (!pageBufferUsed[i])
+                            {
+                                index = i;
+                                break;
+                            }
+                        }
+                    }
+                    pageBuffer[index] = dirtyPage;
+                    pageBufferUsed[index] = true;
+                    pageIdHashMap.put(pid, index);
+                    LRUList.addLast(pid);
+                    dirtyPage.setBeforeImage();
                 }
-                pageBuffer[index] = dirtyPage;
-                pageBufferUsed[index] = true;
-                pageIdHashMap.put(pid, index);
-                LRUList.addLast(pid);
+                dirtyPage.markDirty(true, tid);
             }
-            dirtyPage.markDirty(true, tid);
         }
     }
 
@@ -242,27 +352,18 @@ public class BufferPool {
         throws DbException, IOException, TransactionAbortedException {
         DbFile dbFile = Database.getCatalog().getDatabaseFile(t.getRecordId().getPageId().getTableId());
         ArrayList<Page> dirtyPages = dbFile.deleteTuple(tid, t);
-        for (Page dirtyPage : dirtyPages)
+        synchronized (this)
         {
-            PageId pid = dirtyPage.getId();
-            if (this.pageIdHashMap.containsKey(pid))
+            for (Page dirtyPage : dirtyPages)
             {
-                LRUList.remove(pid);
-                LRUList.addLast(pid);
-                pageBuffer[pageIdHashMap.get(pid)] = dirtyPage;
-            } else {
-                int index = pageBuffer.length;
-                for (int i = 0; i < pageBuffer.length; i++)
+                PageId pid = dirtyPage.getId();
+                if (this.pageIdHashMap.containsKey(pid))
                 {
-                    if (!pageBufferUsed[i])
-                    {
-                        index = i;
-                        break;
-                    }
-                }
-                while (index >= pageBuffer.length)
-                {
-                    this.evictPage();
+                    LRUList.remove(pid);
+                    LRUList.addLast(pid);
+                    pageBuffer[pageIdHashMap.get(pid)] = dirtyPage;
+                } else {
+                    int index = pageBuffer.length;
                     for (int i = 0; i < pageBuffer.length; i++)
                     {
                         if (!pageBufferUsed[i])
@@ -271,13 +372,26 @@ public class BufferPool {
                             break;
                         }
                     }
+                    while (index >= pageBuffer.length)
+                    {
+                        this.evictPage();
+                        for (int i = 0; i < pageBuffer.length; i++)
+                        {
+                            if (!pageBufferUsed[i])
+                            {
+                                index = i;
+                                break;
+                            }
+                        }
+                    }
+                    pageBuffer[index] = dirtyPage;
+                    pageBufferUsed[index] = true;
+                    pageIdHashMap.put(pid, index);
+                    LRUList.addLast(pid);
+                    dirtyPage.setBeforeImage();
                 }
-                pageBuffer[index] = dirtyPage;
-                pageBufferUsed[index] = true;
-                pageIdHashMap.put(pid, index);
-                LRUList.addLast(pid);
+                dirtyPage.markDirty(true, tid);
             }
-            dirtyPage.markDirty(true, tid);
         }
     }
 
@@ -319,16 +433,31 @@ public class BufferPool {
         if (pageIdHashMap.containsKey(pid))
         {
             int arrayIndex = pageIdHashMap.get(pid);
-            Database.getCatalog().getDatabaseFile(pid.getTableId()).writePage(pageBuffer[arrayIndex]);
-            pageBufferUsed[arrayIndex] = true;
+            Page page = pageBuffer[arrayIndex];
+            if (page.isDirty() == null) return;
+            page.markDirty(false, null);
+            Database.getCatalog().getDatabaseFile(pid.getTableId()).writePage(page);
         }
     }
 
     /** Write all pages of the specified transaction to disk.
      */
     public synchronized  void flushPages(TransactionId tid) throws IOException {
-        // some code goes here
-        // not necessary for lab1|lab2
+//        Set<PageId> pids = tidToPid.get(tid);
+//        if (pids != null)
+//        {
+//            for (PageId pid : pids)
+//            {
+//                if (!holdsLock(tid, pid)) return;
+//            }
+//            for (PageId pid : pids)
+//            {
+//                if (pidToLock.get(pid).isExclusiveTid(tid))
+//                {
+//                    flushPage(pid);
+//                }
+//            }
+//        }
     }
 
     /**
@@ -336,7 +465,22 @@ public class BufferPool {
      * Flushes the page to disk to ensure dirty pages are updated on disk.
      */
     private synchronized  void evictPage() throws DbException {
-        PageId pid = LRUList.pollFirst();
+        Iterator<PageId> iterator = LRUList.iterator();
+        PageId pid = null;
+        while (iterator.hasNext())
+        {
+            PageId tmpPid = iterator.next();
+            Page page = pageBuffer[pageIdHashMap.get(tmpPid)];
+            if (page.isDirty() == null)
+            {
+                pid = tmpPid;
+                break;
+            }
+        }
+        if (pid == null)
+        {
+            throw new DbException("all pages are dirty in evict page!");
+        }
         int arrayIndex = pageIdHashMap.get(pid);
         try{
             this.flushPage(pid);
@@ -347,6 +491,7 @@ public class BufferPool {
         }
         pageBufferUsed[arrayIndex] = false;
         pageIdHashMap.remove(pid);
+        this.LRUList.remove(pid);
     }
 
 }
